@@ -1,0 +1,216 @@
+---
+title: "NYPD Shooting Data"
+output:
+  pdf_document: default
+  html_document: default
+date: "2023-10-11"
+---
+
+# R Libraries to Install and Shapefiles
+This notebook requires a installation of the sf library for shapefile data. Here's a link to the library source code https://r-spatial.github.io/sf/ and here's a link to the sf library on CRAN https://cran.r-project.org/web/packages/sf/index.html . You must then also unzip the nybb_23.zip file to the location of your RStudio data directory.
+
+# Introduction and Data Summary
+I'm evaluating this gun violence data to find patterns in times and locations to help Police precincts be better managed and equipped to deal with dangerous scenarios while also informing citizens about the safest times to be outside in their wonderful city.
+The recorded shooting data is from https://catalog.data.gov/ and is updated to the end of the previous calendar year.
+The data I pulled is from 2006-01-01 to 2022-12-31 and there are approximately 27 thousand records of a shooting incident. Each record represents a shooting incident in NYC and includes information about the event, the location and time of occurrence. In addition, information related to suspect and victim demographics is also included. I'm going to strictly focus on location and time analysis of the data so I can remove the rest of the columns I do not plan to utilize. 
+
+```{r import library and shooting data}
+library(sf)
+library(lubridate)
+library(tidyverse)
+
+shooting_data_csv <- read_csv("NYPD_Shooting_Incident_Data__Historic_.csv")
+
+summary(shooting_data_csv)
+
+shooting_data <- shooting_data_csv %>%
+  mutate(occur_date = mdy(OCCUR_DATE)) %>%
+  select(BORO, occur_date, OCCUR_TIME) %>%
+  mutate(count = 1) 
+
+max(shooting_data$occur_date)
+min(shooting_data$occur_date)
+
+#"https://s-media.nyc.gov/agencies/dcp/assets/files/zip/data-tools/bytes/nybb_23c.zip"
+
+nyc <- st_read("nybb_23c/")
+
+```
+
+# Tidy and Transform
+
+I'm doing extract transform load manipulations to apply the appropriate data structures the their values. I'm modifying and cleaning up the data set by changing appropriate variables to factor and date types. I'm changing the OCCUR_DATE to a date type object. I'll also do a join to connect two separate tables. 
+
+```{r etl manips}
+
+shooting_data_hourly <- shooting_data %>%
+  filter(occur_date > "2013-9-29") %>%
+  mutate(occur_hour = lubridate::hour(OCCUR_TIME)) %>%
+  mutate(count = 1) %>%
+  group_by(occur_hour, BORO)  %>%
+  summarise(count_sum = sum(count))
+
+shooting_data_binned_boro <- shooting_data_csv %>%
+  mutate(hour = format(strptime(shooting_data_csv$OCCUR_TIME, "%H:%M"), "%H:00")) %>%
+  select(BORO, OCCUR_TIME, hour) %>%
+  mutate(count = 1) %>%
+  group_by(BORO) %>%
+  summarise(count_sum = sum(count))
+
+nyc <- nyc %>%
+  mutate(BORO = toupper(BoroName)) %>%
+  left_join(shooting_data_binned_boro, by = "BORO")
+
+shooting_data_binned_monthly <- shooting_data_csv %>%
+  mutate(occur_date = as.Date(OCCUR_DATE, "%m/%d/%Y")) %>% 
+  select(BORO, occur_date) %>%
+  mutate(count = 1) %>%
+  group_by(BORO, month = lubridate::floor_date(occur_date, "month")) %>%
+  summarise(count_sum = sum(count))
+```
+
+# Visualization and Analysis 1
+
+```{r borough data viz}
+nyc %>%
+  ggplot() +
+  geom_sf(aes(fill = count_sum)) +
+  geom_sf_text(aes(label = BoroName)) +
+  scale_fill_gradient2( mid = "yellow", high = "red") +
+  theme(legend.position="right") +
+  theme(legend.title=element_blank()) +
+  labs(title = "Total Reported NYPD Shootings per Borough for years 2006 - 2022", y = NULL, x = NULL)
+
+```
+
+Brooklyn is the most likely borough of a reported shooting while Staten Island is the least likely borough of a reported shooting.
+
+# Visualization and Analysis 2
+```{r shooting data yearly data viz}
+
+shooting_data %>%
+  group_by(BORO, year = floor_date(occur_date, "year")) %>%
+  summarise(count_sum = sum(count)) %>%
+  ggplot(aes(x = year, y = count_sum, group = BORO)) +
+  geom_line(aes(color = BORO)) +
+  geom_point(aes(color = BORO)) +
+  theme(legend.title=element_blank()) +
+  theme(legend.position ="bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = "Reported NYPD Shootings by year 2006 to 2022", y = NULL, x = "Year")
+```
+
+The chart looks like there is a downward slope in reported shootings from all boroughs until 2020 and then a large increase of reported shootings. 
+
+```{r shooting data yearly data viz with mod}
+shooting_data_lm_prep <- shooting_data %>%
+  filter(occur_date > "2012-9-29") %>%
+  mutate(occur_month = month(occur_date)) %>%
+  mutate(occur_year = year(occur_date)) %>%
+  group_by(BORO, occur_year, occur_month) %>%
+  summarise(count_sum = sum(count)) %>%
+  ungroup()
+
+year_month_mod <- lm( count_sum ~ occur_year + occur_month, data = shooting_data_lm_prep)
+
+shooting_data_mod <- shooting_data_lm_prep %>%
+  mutate(pred = predict(year_month_mod))
+  
+shooting_data_mod %>%
+  filter(occur_month > 10) %>%
+  group_by(BORO, occur_year) %>%
+  summarise(count_sum_tot = sum(count_sum), count_pred = sum(pred))
+
+shooting_data_mod %>%
+  filter(occur_year > 2012) %>%
+  group_by(BORO, occur_year) %>%
+  summarise(count_sum_tot = sum(count_sum), count_pred = sum(pred)) %>%
+  ggplot(aes(x = occur_year, y = count_sum_tot, group = BORO)) +
+  geom_line(aes(color = BORO)) +
+  geom_point(aes(color = BORO)) +
+  geom_line(aes(x = occur_year, y = count_pred, color = "Predicted")) +
+  geom_point(aes(x = occur_year, y = count_pred, color = "Predicted") ) +
+  theme(legend.title=element_blank()) +
+  theme(legend.position ="bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = "Reported NYPD Shootings by year 2013 to 2022 with Regression Model", y = NULL, x = "Year")
+
+```
+The linear regression model fitted to the windowed data for the years 2013 to 2020 has an upward trend of reported shootings with an increase of 1.0255 shootings per year.
+
+# Visualization and Analysis 3
+```{r shooting data monthly}
+
+mymonths <- c("Jan","Feb","Mar",
+              "Apr","May","Jun",
+              "Jul","Aug","Sep",
+              "Oct","Nov","Dec")
+
+shooting_data_monthly <- shooting_data %>%
+  filter(occur_date > "2013-9-29") %>%
+  mutate(occur_month = month(occur_date)) %>%
+  group_by(BORO, occur_month) %>%
+  summarise(count_sum = sum(count))
+
+shooting_data_monthly$month_abv <- mymonths[shooting_data_monthly$occur_month]
+
+shooting_data_monthly %>%
+  ggplot(aes(x = occur_month, y = count_sum, group = BORO)) +
+  geom_line(aes(color = BORO)) +
+  geom_point(aes(color = BORO)) +
+  theme(legend.title=element_blank()) +
+  scale_x_continuous(
+    breaks = seq_along(shooting_data_monthly$month_abv), 
+    labels = shooting_data_monthly$month_abv
+  ) +
+  theme(legend.position ="bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = "Sum of Previous 10 years of Documented NYPD Shootings per Month", y = NULL, x = "Month of the Year")
+```
+
+It looks like shootings are more likely to occur in the summer months compared to winter.
+
+# Visualization and Analysis 4
+```{r shooting data weekly}
+
+shooting_data_weekly <- shooting_data %>%
+  filter(occur_date > "2013-9-29") %>%
+  mutate(dow = strftime(occur_date, "%A")) %>%
+  mutate(dow = factor(dow, levels = c("Monday", "Tuesday","Wednesday", "Thursday", "Friday","Saturday", "Sunday"))) %>% 
+  group_by(BORO, dow) %>%
+  summarise(count_sum = sum(count)) 
+
+shooting_data_weekly %>%
+  ggplot(aes(x = dow, y = count_sum, group = BORO)) +
+  geom_line(aes(color = BORO)) +
+  geom_point(aes(color = BORO)) +
+  theme(legend.title=element_blank()) +
+  theme(legend.position ="bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = "Sum of Previous 10 Years of Documented NYPD Shootings per Day of the Week", y = NULL, x = "Day of the Week")
+
+```
+
+It looks like the weekends have a slightly higher rate of reported shootings compared to the weekdays.
+
+# Visualization and Analysis 5
+```{r shooting data hourly}
+
+
+shooting_data_hourly %>%
+  ggplot(aes(x = occur_hour, y = count_sum, group = BORO)) +
+  geom_line(aes(color = BORO)) +
+  geom_point(aes(color = BORO)) +
+  theme(legend.position ="bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = "Sum of previous 10 years of Documented NYPD Shootings per Hour", y = NULL, x = "Time of the Day")
+
+```
+It looks like the mid morning to mid afternoon are the least amount of reported shootings. 
+
+
+# Conclusion and Bias Identification
+
+After evaluating this gun violence data to find patterns in times and locations to help Police precincts be better managed and equipped to deal with dangerous scenarios while also informing citizens about the safest times to be outside in their wonderful city. I've found that year (P value from the regression table was 0.000157) and months of the year (P value from the regression table was 0.018546) are better predictors for reported shooting incidences; day of the week seems is not as big of a predictor as I previously expected. The borough seems to be a significant predictor as well.   
+
+My personal bias is that I'm assuming most of the shootings are males so I checked to validate that bias and it was true. I went ahead and validated that with data to mitigate that bias. There could be bias in data from the collections that many of the precincts do not have data. This bias could be that there isn't available data or they reported no data. I've also wondered how each precinct reports data could include errors. For example maybe Staten Island or some of the precincts in certain boroughs do not have updated technology to appropriately report shooting incidences.  
