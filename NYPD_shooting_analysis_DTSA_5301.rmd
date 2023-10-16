@@ -6,8 +6,8 @@ output:
 date: "2023-10-11"
 ---
 
-# R Libraries to Install and Shapefiles
-This notebook requires a installation of the sf library for shapefile data. Here's a link to the library source code https://r-spatial.github.io/sf/ and here's a link to the sf library on CRAN https://cran.r-project.org/web/packages/sf/index.html . You must then also unzip the nybb_23.zip file to the location of your RStudio data directory.
+# R Libraries to Install
+This notebook requires a installation of the tidyverse package. It can be installed using the R-Studio Packages tab.
 
 # Introduction and Data Summary
 I'm evaluating this gun violence data to find patterns in times and locations to help Police precincts be better managed and equipped to deal with dangerous scenarios while also informing citizens about the safest times to be outside in their wonderful city.
@@ -15,7 +15,7 @@ The recorded shooting data is from https://catalog.data.gov/ and is updated to t
 The data I pulled is from 2006-01-01 to 2022-12-31 and there are approximately 27 thousand records of a shooting incident. Each record represents a shooting incident in NYC and includes information about the event, the location and time of occurrence. In addition, information related to suspect and victim demographics is also included. I'm going to strictly focus on location and time analysis of the data so I can remove the rest of the columns I do not plan to utilize. 
 
 ```{r import library and shooting data}
-library(sf)
+
 library(lubridate)
 library(tidyverse)
 
@@ -30,10 +30,6 @@ shooting_data <- shooting_data_csv %>%
 
 max(shooting_data$occur_date)
 min(shooting_data$occur_date)
-
-#"https://s-media.nyc.gov/agencies/dcp/assets/files/zip/data-tools/bytes/nybb_23c.zip"
-
-nyc <- st_read("nybb_23c/")
 
 ```
 
@@ -57,9 +53,6 @@ shooting_data_binned_boro <- shooting_data_csv %>%
   group_by(BORO) %>%
   summarise(count_sum = sum(count))
 
-nyc <- nyc %>%
-  mutate(BORO = toupper(BoroName)) %>%
-  left_join(shooting_data_binned_boro, by = "BORO")
 
 shooting_data_binned_monthly <- shooting_data_csv %>%
   mutate(occur_date = as.Date(OCCUR_DATE, "%m/%d/%Y")) %>% 
@@ -69,23 +62,8 @@ shooting_data_binned_monthly <- shooting_data_csv %>%
   summarise(count_sum = sum(count))
 ```
 
+
 # Visualization and Analysis 1
-
-```{r borough data viz}
-nyc %>%
-  ggplot() +
-  geom_sf(aes(fill = count_sum)) +
-  geom_sf_text(aes(label = BoroName)) +
-  scale_fill_gradient2( mid = "yellow", high = "red") +
-  theme(legend.position="right") +
-  theme(legend.title=element_blank()) +
-  labs(title = "Total Reported NYPD Shootings per Borough for years 2006 - 2022", y = NULL, x = NULL)
-
-```
-
-Brooklyn is the most likely borough of a reported shooting while Staten Island is the least likely borough of a reported shooting.
-
-# Visualization and Analysis 2
 ```{r shooting data yearly data viz}
 
 shooting_data %>%
@@ -113,6 +91,8 @@ shooting_data_lm_prep <- shooting_data %>%
 
 year_month_mod <- lm( count_sum ~ occur_year + occur_month, data = shooting_data_lm_prep)
 
+summary(year_month_mod)
+
 shooting_data_mod <- shooting_data_lm_prep %>%
   mutate(pred = predict(year_month_mod))
   
@@ -138,7 +118,7 @@ shooting_data_mod %>%
 ```
 The linear regression model fitted to the windowed data for the years 2013 to 2020 has an upward trend of reported shootings with an increase of 1.0255 shootings per year.
 
-# Visualization and Analysis 3
+# Visualization and Analysis 2
 ```{r shooting data monthly}
 
 mymonths <- c("Jan","Feb","Mar",
@@ -170,7 +150,7 @@ shooting_data_monthly %>%
 
 It looks like shootings are more likely to occur in the summer months compared to winter.
 
-# Visualization and Analysis 4
+# Visualization and Analysis 3
 ```{r shooting data weekly}
 
 shooting_data_weekly <- shooting_data %>%
@@ -193,7 +173,7 @@ shooting_data_weekly %>%
 
 It looks like the weekends have a slightly higher rate of reported shootings compared to the weekdays.
 
-# Visualization and Analysis 5
+# Visualization and Analysis 4
 ```{r shooting data hourly}
 
 
